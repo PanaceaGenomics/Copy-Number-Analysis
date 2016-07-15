@@ -1,0 +1,48 @@
+#!/bin/bash
+#PBS -q batch
+#PBS -l nodes=1:ppn=16
+#PBS -l walltime=5:00:00
+#PBS -N cn.mops
+cd $PBS_O_WORKDIR
+
+# Remeber bed file with not redundant regions!!!
+
+module load R/3.2.2 
+time R --vanilla << "EOF"
+
+library("snow", lib.loc="/scratch/EXOME_DATA/R_packages/")
+library("cn.mops", lib.loc="/scratch/EXOME_DATA/R_packages/")
+library("dplyr", lib.loc="/scratch/EXOME_DATA/R_packages/")
+
+BAMFiles <- list.files(pattern=".bam$")
+#segments<-read.table("bait.bed",sep="\t",as.is=TRUE)
+segments<-read.table("hg19_refgene_unique_exons_all_TYR.bed",sep="\t",as.is=TRUE)
+gr <-GRanges(segments[,1],IRanges(segments[,2],segments[,3]))
+
+X<-getSegmentReadCountsFromBAM(BAMFiles,GR=gr,mode="paired")
+resCNMOPS<-exomecn.mops(X,parallel=16,normType="mean")
+resCNMOPSiCNV<-calcIntegerCopyNumbers(resCNMOPS)
+
+segplot(resCNMOPS, sampleIdx=PR0120)
+plot (resCNMOPSiCNV, which=5)
+
+save(X,file="X.RData")
+save(resCNMOPS,file="resCNMOPS.RData")
+save(resCNMOPSiCNV,file="resCNMOPSiCNV.RData")
+
+fix_name <- function(x) { gsub("CN","CN",x) }
+ 
+results_df <- tbl_df(as.data.frame(cnvr(resCNMOPSiCNV))) %>%
+				   rename(chrom=seqnames) %>%
+				   mutate(name="", score=0) %>%
+				   mutate_each(funs(fix_name), matches("bam")) %>%
+				   select(chrom, start, end,  name, score, strand, width, everything()) %>%
+				   arrange(chrom)
+
+
+names(results_df) <- gsub("\\.bam","",names(results_df))
+write.table(results_df, file="H1912_cnmops_cnvr.bed", quote=F, sep="\t", row.names=F, col.names=T)
+
+
+EOF
+
